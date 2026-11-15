@@ -9,7 +9,8 @@ A multi-agent trading system with two mandates:
 
 ## Docs
 
-- `docs/OPERATOR_BRIEF.md`: start here. Which AI does what, the hard truths, phase gates and the build queue.
+- `MASTER_PROMPT.md`: **start here.** Paste it into Claude Code on your Mac and it installs and runs everything.
+- `docs/OPERATOR_BRIEF.md`: Which AI does what, the hard truths, phase gates and the build queue.
 - `docs/GO_TO_MARKET.md`: what we sell (Holder Scout), pricing, and the step-by-step plan to the first sale.
 - `docs/PLAYBOOK.md`: every trading rule, its source, and the backtest results.
 - `RUG-PULL-WARNING.md`: the scam this desk is built to avoid, never to run.
