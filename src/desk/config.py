@@ -23,10 +23,13 @@ class RiskConfig:
 
 @dataclass(frozen=True)
 class CostConfig:
-    # VERIFY all three against real fills. These decide whether a $20 strategy can be profitable at all.
-    slippage_pct: float = 1.5      # per side, small-cap memecoin
-    venue_fee_pct: float = 1.0     # per side (Pump.fun / DEX swap fee)
-    network_fee_usd: float = 0.02  # per transaction incl. priority fee
+    # Measured 15 Nov 2026 with `python -m desk costs` (Jupiter quotes, $20 round trip, 10 live tokens).
+    # VERIFY all three against real fills in Phase 1. These decide whether a $20 strategy can pay at all.
+    slippage_pct: float = 1.5      # per side. Quotes show only our own price impact (p75 0.38%); kept at
+                                   # 1.5 because a quote can't see the price moving before a trade lands.
+    venue_fee_pct: float = 1.25    # per side. Measured: Pump.fun AMM 0.99-1.28%, p75 1.21%. Was 1.0.
+    network_fee_usd: float = 0.02  # per transaction. Measured $0.0015 at 'High' priority; kept at 0.02
+                                   # to leave room for the tip needed to land fast.
 
 
 @dataclass(frozen=True)
