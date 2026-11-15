@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Desk Control Room</title>
+<style>
+:root{--bg:#0d1311;--panel:#141c19;--line:#24312c;--ink:#e2ebe6;--muted:#8a9c94;--green:#3cc48b;--red:#ef6f64;--amber:#e5b44a;
+--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--sans:-apple-system,"Segoe UI",Inter,system-ui,sans-serif;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);padding:20px max(16px,2vw) 48px}
+h1{font-size:18px;margin:0}
+h2{font-size:12px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:18px}
+.status{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pill{font:600 12px var(--mono);padding:3px 10px;border-radius:99px;border:1px solid var(--line)}
+.pill.live{color:var(--green);border-color:var(--green)}.pill.paused{color:var(--amber);border-color:var(--amber)}.pill.down{color:var(--red);border-color:var(--red)}
+.controls{display:flex;gap:8px}
+button{font:600 13px var(--sans);padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--muted)}button.danger{border-color:var(--red);color:var(--red)}
+button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+.s12{grid-column:span 12}.s8{grid-column:span 8}.s4{grid-column:span 4}.s6{grid-column:span 6}
+@media(max-width:900px){.s8,.s4,.s6{grid-column:span 12}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.kpi b{display:block;font:600 22px var(--mono);font-variant-numeric:tabular-nums}.kpi span{color:var(--muted);font-size:12px}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.reasons{white-space:normal;color:var(--muted);font-size:12px;min-width:260px}
+.tag{font:600 11px var(--mono);padding:1px 6px;border-radius:4px;background:var(--line)}
+.tag.ok{background:#173a2b;color:var(--green)}.tag.no{background:#3a1d1a;color:var(--red)}
+.beat{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}
+.beat span:last-child{font-family:var(--mono);color:var(--muted)}
+.gate div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line)}
+svg{width:100%;height:160px;display:block}
+.empty{color:var(--muted);padding:12px 0}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="status"><h1>Desk Control Room</h1><span id="phase" class="pill">Phase 0 · paper</span><span id="live" class="pill">connecting…</span><span id="updated" class="pill"></span></div>
+  <div class="controls">
+    <button id="pause" type="button">Pause entries</button>
+    <button id="resume" type="button">Resume</button>
+    <button id="flatten" class="danger" type="button">Flatten all</button>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel s12"><div class="kpis">
+    <div class="kpi"><b id="k-open">–</b><span>open positions</span></div>
+    <div class="kpi"><b id="k-today">–</b><span>realised today</span></div>
+    <div class="kpi"><b id="k-total">–</b><span>realised all-time</span></div>
+    <div class="kpi"><b id="k-n">–</b><span>closed trades</span></div>
+    <div class="kpi"><b id="k-wr">–</b><span>win rate</span></div>
+    <div class="kpi"><b id="k-ev">–</b><span>EV per trade</span></div>
+    <div class="kpi"><b id="k-dd">–</b><span>max drawdown</span></div>
+    <div class="kpi"><b id="k-screen">–</b><span>screened / approved this run</span></div>
+  </div></div>
+
+  <div class="panel s8"><h2>Equity curve (realised, paper $)</h2><svg id="curve" viewBox="0 0 600 160" preserveAspectRatio="none"></svg></div>
+  <div class="panel s4 gate"><h2>Phase 1 gate ($500 live)</h2>
+    <div><span>200+ paper trades</span><span id="g-n">–</span></div>
+    <div><span>Positive EV after costs</span><span id="g-ev">–</span></div>
+    <div><span>Max drawdown &lt; $100</span><span id="g-dd">–</span></div>
+    <div><span>Zero hard-fail tokens traded</span><span id="g-hf">–</span></div>
+  </div>
+
+  <div class="panel s8"><h2>Open positions</h2><div class="tw"><table><thead><tr><th>Token</th><th>Desk</th><th>Mode</th><th>Age</th><th>Entry</th><th>Price</th><th>P&amp;L</th><th>Floor</th><th>Stake back</th></tr></thead><tbody id="open"></tbody></table></div></div>
+  <div class="panel s4"><h2>Agents</h2><div id="beats"></div><h2 style="margin-top:14px">Desks (all-time)</h2><div id="desks"></div></div>
+
+  <div class="panel s6"><h2>Recent closed trades</h2><div class="tw"><table><thead><tr><th>Closed</th><th>Token</th><th>Desk</th><th>Exit</th><th>P&amp;L</th></tr></thead><tbody id="closed"></tbody></table></div></div>
+  <div class="panel s6"><h2>Holder Scout decisions</h2><div class="tw"><table><thead><tr><th>Time</th><th>Token</th><th>Verdict</th><th>Risk</th><th>Why</th></tr></thead><tbody id="decisions"></tbody></table></div></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const usd=v=>v==null?'–':(v<0?'-$':'$')+Math.abs(v).toFixed(2);
+const cls=v=>v>0?'pos':v<0?'neg':'';
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const t=s=>s?new Date(s).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'';
+const ago=s=>{if(!s)return 'never';const d=(Date.now()-new Date(s))/1000;return d<90?Math.round(d)+'s ago':Math.round(d/60)+'m ago'};
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+async function control(body){await j('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});refresh()}
+$('pause').onclick=()=>control({paused:true});
+$('resume').onclick=()=>control({paused:false});
+let armed=false;
+$('flatten').onclick=()=>{if(!armed){armed=true;$('flatten').textContent='Click again to flatten';setTimeout(()=>{armed=false;$('flatten').textContent='Flatten all'},4000);return}armed=false;$('flatten').textContent='Flatten all';control({flatten:true})};
+
+function drawCurve(c){
+  const svg=$('curve');
+  if(!c.length){svg.innerHTML='<text x="10" y="80" fill="#8a9c94" font-size="13">No closed trades yet</text>';return}
+  const pts=[0,...c],min=Math.min(...pts),max=Math.max(...pts),rng=(max-min)||1;
+  const x=i=>i/(pts.length-1||1)*600,y=v=>150-(v-min)/rng*140;
+  const d=pts.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1)).join('');
+  const col=pts[pts.length-1]>=0?'#3cc48b':'#ef6f64';
+  svg.innerHTML=`<line x1="0" x2="600" y1="${y(0)}" y2="${y(0)}" stroke="#24312c"/><path d="${d}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+}
+
+async function refresh(){
+  try{
+    const [st,sm,dec]=await Promise.all([j('/api/state'),j('/api/summary'),j('/api/decisions')]);
+    const fresh=st.updated&&(Date.now()-new Date(st.updated))<90000;
+    $('live').textContent=!fresh?'firm offline':st.paused?'entries paused':'live';
+    $('live').className='pill '+(!fresh?'down':st.paused?'paused':'live');
+    $('updated').textContent=st.updated?'updated '+ago(st.updated):'';
+    const open=st.open||[];
+    $('k-open').textContent=open.length;
+    $('k-today').textContent=usd(st.today_realised);$('k-today').className=cls(st.today_realised);
+    $('k-total').textContent=usd(sm.total);$('k-total').className=cls(sm.total);
+    $('k-n').textContent=sm.n;
+    $('k-wr').textContent=sm.win_rate==null?'–':Math.round(sm.win_rate*100)+'%';
+    $('k-ev').textContent=usd(sm.ev);$('k-ev').className=cls(sm.ev);
+    $('k-dd').textContent=usd(sm.max_dd);
+    $('k-screen').textContent=st.stats?`${st.stats.screened} / ${st.stats.approved}`:'–';
+    drawCurve(sm.curve||[]);
+    $('g-n').innerHTML=sm.gate.trades_needed?`<span class="tag no">${sm.n}/200</span>`:'<span class="tag ok">met</span>';
+    $('g-ev').innerHTML=sm.gate.ev_positive?'<span class="tag ok">yes</span>':'<span class="tag no">not yet</span>';
+    $('g-dd').innerHTML=sm.gate.dd_ok?'<span class="tag ok">yes</span>':'<span class="tag no">no</span>';
+    $('g-hf').innerHTML=sm.gate.hard_fail_ok?'<span class="tag ok">0 traded</span>':`<span class="tag no">${sm.gate.hard_fail_traded} traded${sm.gate.hard_fail_unaudited?', '+sm.gate.hard_fail_unaudited+' unaudited':''}</span>`;
+    $('open').innerHTML=open.length?open.map(p=>`<tr><td>${esc(p.symbol)}</td><td>${esc(p.desk)}</td><td>${esc(p.mode)}</td><td class="n">${Math.round(p.age_s/60)}m</td><td class="n">${(+p.entry).toPrecision(4)}</td><td class="n">${(+p.price).toPrecision(4)}</td><td class="n ${cls(p.pnl_usd)}">${usd(p.pnl_usd)}</td><td class="n">${p.floor==null?'–':'$'+p.floor}</td><td>${p.stake_recovered?'<span class="tag ok">yes</span>':'no'}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">No open positions</td></tr>';
+    const names={holder_scout:'Holder Scout',risk_desk:'Risk desk',news_desk:'News Desk (Grok)'};
+    $('beats').innerHTML=Object.entries(names).map(([k,v])=>`<div class="beat"><span>${v}</span><span>${ago((st.heartbeat||{})[k])}</span></div>`).join('');
+    const dk=Object.entries(sm.desks||{});
+    $('desks').innerHTML=dk.length?dk.map(([k,d])=>`<div class="beat"><span>${esc(k)} · ${d.n} trades · ${d.n?Math.round(d.wins/d.n*100):0}% win</span><span class="${cls(d.pnl)}">${usd(d.pnl)}</span></div>`).join(''):'<div class="empty">No trades yet</div>';
+    $('closed').innerHTML=(sm.recent||[]).length?sm.recent.map(r=>`<tr><td>${t(r.closed_utc)}</td><td>${esc(r.symbol)}</td><td>${esc(r.desk)}</td><td>${esc(r.exit_reason)}</td><td class="n ${cls(r.pnl_usd)}">${usd(r.pnl_usd)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No closed trades yet</td></tr>';
+    $('decisions').innerHTML=dec.length?dec.map(d=>`<tr><td>${t(d.ts)}</td><td>${esc(d.symbol)}</td><td>${d.trade?'<span class="tag ok">BUY</span>':'<span class="tag no">'+esc(d.mode==='reject'?'REJECT':'PASS')+'</span>'}</td><td class="n">${d.risk_score}</td><td class="reasons">${esc((d.reasons||[]).slice(0,3).join(' · '))}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No decisions yet. Start the firm.</td></tr>';
+  }catch(e){$('live').textContent='dashboard error';$('live').className='pill down'}
+}
+refresh();setInterval(refresh,5000);
+</script>
+</body>
+</html>
