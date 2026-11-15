@@ -38,15 +38,32 @@ def pairs(token: str) -> list[dict]:
     return _get(f"/token-pairs/v1/solana/{token}") or []
 
 
-def pick_best(all_pairs: list[dict]) -> dict | None:
+def _activity(p: dict) -> tuple:
+    h1 = (p.get("txns") or {}).get("h1") or {}
+    return ((h1.get("buys") or 0) + (h1.get("sells") or 0), (p.get("volume") or {}).get("h24") or 0,
+            (p.get("liquidity") or {}).get("usd") or 0, p.get("marketCap") or 0)
+
+
+def pick_best(all_pairs: list[dict], prefer: str | None = None) -> dict | None:
+    """The pair where this token actually trades: most transactions in the last hour, then 24h
+    volume, then liquidity. `prefer` pins a specific pair address (the one a position was opened
+    on) so its price and liquidity are compared like with like.
+
+    Ranking by liquidity alone was wrong on live data (15 Nov 2026): a token still on the
+    Pump.fun bonding curve shows no liquidity figure there, so a stray $1.40 Meteora pool with
+    one trade all day outranked the curve doing 1,500 trades an hour.
+    """
     if not all_pairs:
         return None
-    # Prefer the deepest open-market pool; fall back to the bonding curve pair.
-    return max(all_pairs, key=lambda p: ((p.get("liquidity") or {}).get("usd") or 0, p.get("marketCap") or 0))
+    if prefer:
+        for p in all_pairs:
+            if p.get("pairAddress") == prefer:
+                return p
+    return max(all_pairs, key=_activity)
 
 
-def best_pair(token: str) -> dict | None:
-    return pick_best(pairs(token))
+def best_pair(token: str, prefer: str | None = None) -> dict | None:
+    return pick_best(pairs(token), prefer)
 
 
 def snapshot_fields(pair: dict) -> dict:

@@ -81,11 +81,12 @@ def position_from_dict(d: dict, settings: Settings) -> Position:
 
 class Firm:
     def __init__(self, settings: Settings = DEFAULT, use_grok: bool = False,
-                 snapshot_fn=build_snapshot, pair_fn=dx.best_pair, tokens_fn=dx.latest_solana_tokens,
+                 snapshot_fn=build_snapshot, pair_fn=None, tokens_fn=dx.latest_solana_tokens,
                  sentiment_fn=score_token, send_fn=alerts.send):
         self.s = settings
         self.use_grok = use_grok
-        self.snapshot_fn, self.pair_fn, self.tokens_fn = snapshot_fn, pair_fn, tokens_fn
+        self.snapshot_fn, self.tokens_fn = snapshot_fn, tokens_fn
+        self.pair_fn = pair_fn or dx.best_pair
         self.sentiment_fn, self.send = sentiment_fn, send_fn
         self.book = Book(risk=settings.risk)
         self.meta: dict[str, dict] = {}            # symbol -> desk, address, entry liquidity
@@ -94,6 +95,8 @@ class Firm:
         self.stats = {"screened": 0, "approved": 0, "rejected": 0, "started": now_iso(), "cycles": 0}
         self.heartbeat: dict[str, str] = {}
         self.last_brief_day = ""
+        self.last_manage = 0.0
+        self.control: dict = {}
         os.makedirs(STATE, exist_ok=True)
         os.makedirs(JOURNAL, exist_ok=True)
         # carry lifetime realised P&L across restarts so milestones don't re-fire
@@ -166,6 +169,7 @@ class Firm:
     # ---------- 1. manage ----------
     def manage(self, flatten: bool) -> None:
         self.heartbeat["risk_desk"] = now_iso()
+        self.last_manage = time.time()
         for sym, pos in list(self.book.open.items()):
             m = self.meta[sym]
             ts = time.time()
@@ -174,7 +178,7 @@ class Firm:
                 pos._close(ts, px, "founder flatten")
                 continue
             try:
-                pair = self.pair_fn(m["address"])
+                pair = self._pair(m["address"], m.get("pair"))
             except Exception:
                 continue  # network blip is not a rug; try next cycle
             if not pair or not pair.get("priceUsd"):
@@ -194,9 +198,15 @@ class Firm:
             if act:
                 self.send(f"{sym} [{m['desk']}]: {act} | P&L ${pos.pnl_at(px):+.2f}")
 
+    def _pair(self, addr: str, pool: str | None = None) -> dict | None:
+        """Market data for a token, pinned to the pool the position was opened on when we know it,
+        so price and liquidity are always compared like with like."""
+        return self.pair_fn(addr, pool) if pool else self.pair_fn(addr)
+
     def _price(self, addr: str) -> float | None:
         try:
-            p = self.pair_fn(addr)
+            pool = next((m.get("pair") for m in self.meta.values() if m.get("address") == addr), None)
+            p = self._pair(addr, pool)
             return float(p["priceUsd"]) if p and p.get("priceUsd") else None
         except Exception:
             return None
@@ -229,10 +239,17 @@ class Firm:
             addr = tok["tokenAddress"]
             if addr in self.seen:
                 continue
-            self.seen[addr] = None
+            # Screening one token takes seconds and a fresh feed can hold dozens. Open positions
+            # must not wait for the whole scan: stops and rug watch run at least every poll interval.
+            if self.book.open and time.time() - self.last_manage >= self.s.desks.poll_seconds:
+                self.manage(flatten=False)
+                self.settle()
+                self.save_positions()
+                self.write_state(self.control)
             ok, why = self.book.can_open(day_pnl=self.today_realised())
             if not ok:
-                return
+                return                    # not marked as seen: it gets screened once there is room
+            self.seen[addr] = None
             try:
                 snap = self.snapshot_fn(addr, deep=False)        # cheap: DexScreener + mint + top-10
             except Exception as e:
@@ -265,7 +282,8 @@ class Firm:
             if not px:
                 continue
             self.book.open[snap.symbol] = Position.open(snap.symbol, time.time(), px, d.mode, self.s.risk, self.s.costs)
-            self.meta[snap.symbol] = {"desk": desk, "address": addr, "entry_liq": snap.liquidity_usd,
+            self.meta[snap.symbol] = {"desk": desk, "address": addr, "pair": snap.details.get("pair"),
+                                      "entry_liq": snap.liquidity_usd,
                                       "conviction": d.conviction, "risk_score": d.screen.risk_score, "last_price": px,
                                       "hard_fail": bool(d.screen.hard_fail)}   # audited by the Phase 1 gate
             self.stats["approved"] += 1
@@ -298,7 +316,7 @@ class Firm:
 
     # ---------- loop ----------
     def cycle(self) -> None:
-        control = read_json(os.path.join(STATE, "control.json"), {})
+        control = self.control = read_json(os.path.join(STATE, "control.json"), {})
         flatten = control.get("flatten", False)
         self.manage(flatten)
         if flatten:

@@ -38,6 +38,7 @@ def build_snapshot(addr: str, deep: bool = True) -> TokenSnapshot | None:
         return None
     pools = [p["pairAddress"] for p in all_pairs if p.get("pairAddress")]
     t = TokenSnapshot(address=addr, **dx.snapshot_fields(pair))
+    t.details["pair"] = pair.get("pairAddress")
     try:
         mi = solana.mint_info(addr)
         t.mint_authority_revoked = mi["mint_authority_revoked"]

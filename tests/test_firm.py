@@ -455,3 +455,72 @@ def test_opening_buy_uses_launch_supply_not_todays_burned_supply(monkeypatch):
     monkeypatch.setattr(oc, "_fast_ok", False)
     monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {"curvePDA"})
     assert creator_profile("M", 947_437_182.15)["creator_initial_buy_pct"] == pytest.approx(2.0)
+
+
+def test_pick_best_ignores_junk_side_pool():
+    """Live bug, 15 Nov 2026, token PEARL (real DexScreener numbers): the bonding curve has no
+    liquidity figure, so a $1.40 Meteora pool with one trade outranked the real market."""
+    from desk.data import dexscreener as dx
+    curve = {"dexId": "pumpfun", "pairAddress": "BnvN9cvB", "liquidity": None, "volume": {"h24": 49465.1},
+             "txns": {"h1": {"buys": 891, "sells": 669}}, "priceUsd": "0.00001179"}
+    junk = {"dexId": "meteora", "pairAddress": "CM7aK5Dm", "liquidity": {"usd": 1.4}, "volume": {"h24": 0.04},
+            "txns": {"h1": {"buys": 0, "sells": 1}}, "priceUsd": "0.00001413"}
+    best = dx.pick_best([junk, curve])
+    assert best is curve
+    f = dx.snapshot_fields(best)
+    assert f["graduated"] is False and f["price_usd"] == pytest.approx(0.00001179)
+    assert dx.pick_best([junk, curve], prefer="CM7aK5Dm") is junk       # a position stays on its own pool
+    assert dx.pick_best([junk, curve], prefer="gone") is curve
+    assert dx.pick_best([]) is None
+    # quiet token: falls back to the deepest pool
+    a = {"pairAddress": "a", "liquidity": {"usd": 50_000}}
+    b = {"pairAddress": "b", "liquidity": {"usd": 900}}
+    assert dx.pick_best([b, a]) is a
+
+
+def test_position_is_managed_on_the_pool_it_was_opened_on(dirs):
+    mk = Market()
+    asked = []
+    f = firm_mod.Firm(DEFAULT, snapshot_fn=lambda a, deep=True: TokenSnapshot(a, symbol="GOOD", details={"pair": "POOL1"}, **GOOD),
+                      tokens_fn=lambda: [{"tokenAddress": "MintA", "_source": "profile"}], send_fn=lambda m: None)
+    f.pair_fn = lambda addr, prefer=None: (asked.append(prefer), mk.pair(addr))[1]
+    f.cycle()
+    assert f.meta["GOOD"]["pair"] == "POOL1"
+    f.cycle()
+    assert asked[-1] == "POOL1"
+
+
+def test_open_positions_are_managed_during_a_long_scan(dirs, monkeypatch):
+    """Live finding, 15 Nov 2026: the first scan screened ~60 tokens at ~7s each, and positions
+    opened early in it got no stop-loss or rug-watch check until the whole scan finished."""
+    mk = Market()
+    clock = [1_000_000.0]
+    monkeypatch.setattr(firm_mod.time, "time", lambda: clock[0])
+    tokens = [{"tokenAddress": f"Mint{i}", "_source": "profile"} for i in range(6)]
+    f = make(mk, tokens=tokens)
+
+    def slow_snapshot(a, deep=True):
+        if a == "Mint0":
+            return TokenSnapshot(a, symbol="GOOD", **GOOD)
+        clock[0] += 15                                  # each later token takes 15s to screen
+        if a == "Mint2" and not deep:
+            mk.alive = False                            # the first token rugs mid-scan
+        return TokenSnapshot(a, symbol=f"BAD{a}", **{**GOOD, "top10_pct": 90})
+    f.snapshot_fn = slow_snapshot
+    closed_at = []
+    orig_settle = f.settle
+    f.settle = lambda: (orig_settle(), closed_at.append(clock[0]) if not f.book.open and not closed_at else None)[0]
+    f.cycle()
+    assert f.book.closed and f.book.closed[0].exit_reason.startswith("RUG WATCH")
+    assert closed_at[0] < 1_000_000.0 + 6 * 15         # caught during the scan, not after all six tokens
+
+
+def test_token_skipped_while_book_is_full_is_screened_later(dirs):
+    mk = Market()
+    f = make(mk, tokens=[{"tokenAddress": "MintA", "_source": "profile"}])
+    f.book.can_open = lambda day_pnl=None: (False, "max open positions")
+    f.cycle()
+    assert "MintA" not in f.seen and f.stats["screened"] == 0
+    del f.book.can_open
+    f.cycle()
+    assert "MintA" in f.seen and "GOOD" in f.book.open
