@@ -78,3 +78,11 @@ def test_book_daily_loss_limit():
     b = Book(risk=R)
     assert b.can_open()[0]
     assert not b.can_open(day_pnl=-30)[0]
+
+
+def test_tracker_score():
+    from desk.tracker import score
+    rows = [{"address": "a", "mode": "reject", "risk_score": 80, "price_usd": 1.0},
+            {"address": "b", "mode": "standard", "risk_score": 10, "price_usd": 1.0}]
+    s = score(rows, {"a": 0.05, "b": 0.9})
+    assert s == {"flagged": [1, 1], "passed": [0, 1]}

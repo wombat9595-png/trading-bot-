@@ -56,6 +56,7 @@ def snapshot_fields(pair: dict) -> dict:
         "sells_5m": m5.get("sells"),
         "price_change_5m_pct": (pair.get("priceChange") or {}).get("m5"),
         "age_minutes": (time.time() * 1000 - created) / 60000 if created else None,
+        "price_usd": float(pair["priceUsd"]) if pair.get("priceUsd") else None,
         "has_x_account": any(s.get("type") == "twitter" for s in socials),
     }
 

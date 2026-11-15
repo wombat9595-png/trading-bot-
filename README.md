@@ -10,6 +10,7 @@ A multi-agent trading system with two mandates:
 ## Docs
 
 - `docs/OPERATOR_BRIEF.md`: start here. Which AI does what, the hard truths, phase gates and the build queue.
+- `docs/GO_TO_MARKET.md`: what we sell (Holder Scout), pricing, and the step-by-step plan to the first sale.
 - `docs/PLAYBOOK.md`: every trading rule, its source, and the backtest results.
 - `RUG-PULL-WARNING.md`: the scam this desk is built to avoid, never to run.
 
@@ -25,9 +26,11 @@ src/desk/
   backtest.py          KPIs: win rate, RR, EV (R), max drawdown
   research.py          backtest Mandate B on real hourly data
   paper.py             live paper-trading loop (real data, fake money, full journal)
+  bot.py               Holder Scout: the customer Telegram bot (/check, /watch, rug alerts, free/pro tiers)
+  tracker.py           rug-catch scoreboard: % of flagged vs passed tokens that crashed 90%+
   data/                dexscreener.py, solana.py (RPC/Helius), yahoo.py
   agents/              sentiment_grok.py (X sentiment), decision_claude.py (veto-only reviewer), alerts.py (Telegram)
-tests/                 25 tests, run with pytest
+tests/                 32 tests, run with pytest
 journal/               decisions_*.jsonl + trades_*.csv (git-ignored)
 ```
 

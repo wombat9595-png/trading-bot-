@@ -38,6 +38,7 @@ class TokenSnapshot:
     sells_5m: int | None = None
     price_change_5m_pct: float | None = None
     age_minutes: float | None = None
+    price_usd: float | None = None
 
 
 @dataclass

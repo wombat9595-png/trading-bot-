@@ -103,7 +103,7 @@ def main(minutes: float, poll: float, use_grok: bool) -> None:
                 sent = score_token(snap.symbol, addr) if use_grok else NEUTRAL
                 d = decide(snap, sent, s.engine, s.screen)
                 with open(dec_path, "a") as f:
-                    f.write(json.dumps({"ts": _now(), "address": addr, "symbol": snap.symbol, "trade": d.trade,
+                    f.write(json.dumps({"ts": _now(), "address": addr, "symbol": snap.symbol, "price_usd": snap.price_usd, "trade": d.trade,
                                         "mode": d.mode, "conviction": d.conviction,
                                         "risk_score": d.screen.risk_score, "reasons": d.reasons,
                                         "unknowns": d.screen.unknowns}) + "\n")
