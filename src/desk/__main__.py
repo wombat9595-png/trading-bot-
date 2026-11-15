@@ -77,6 +77,11 @@ def main() -> None:
     if a.cmd == "run":
         from .dashboard import serve
         from .firm import Firm
+        import signal
+
+        def _stop(*_):                      # launchd / `kill` send SIGTERM: stop as cleanly as Ctrl+C
+            raise KeyboardInterrupt
+        signal.signal(signal.SIGTERM, _stop)
         srv = serve(a.port)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         Firm(use_grok=a.grok).run(a.minutes)

@@ -7,7 +7,8 @@ Each cycle:
   2. Alerts desk journals closed trades, fires milestone hold-or-exit alerts
   3. Holder Scout screens new tokens (cheap checks first, forensics only on survivors)
   4. Decision engine + desk routing open new $20 paper positions
-  5. State is written to state/desk.json for the dashboard
+  5. State is written to state/desk.json for the dashboard, and open positions to
+     state/positions.json so a crash or restart picks them up exactly where they were
   6. News Desk sends the morning briefing once a day
 
 Control from the dashboard (or by editing state/control.json): pause entries, flatten all.
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import datetime, timezone
 
 from .agents import alerts
@@ -26,7 +27,7 @@ from .config import DEFAULT, Settings
 from .data import dexscreener as dx
 from .engine import decide
 from .paper import build_snapshot
-from .risk import Book, Position
+from .risk import Book, Fill, Position
 from .screener import screen
 from .strategies import assign_desk, desk_has_room, momentum_faded
 
@@ -59,6 +60,25 @@ def append_jsonl(path: str, row: dict) -> None:
         f.write(json.dumps(row, default=str) + "\n")
 
 
+SEEN_KEEP = 5000          # most recent token addresses remembered across restarts
+_POS_SKIP = {"risk", "costs", "fills"}   # config is re-applied from settings on load
+
+
+def position_to_dict(pos: Position) -> dict:
+    d = {f.name: getattr(pos, f.name) for f in fields(Position) if f.name not in _POS_SKIP}
+    d["fills"] = [asdict(f) for f in pos.fills]
+    return d
+
+
+def position_from_dict(d: dict, settings: Settings) -> Position:
+    known = {f.name for f in fields(Position)} - _POS_SKIP
+    pos = Position(risk=settings.risk, costs=settings.costs, **{k: v for k, v in d.items() if k in known})
+    pos.fills = [Fill(**f) for f in d.get("fills", [])]
+    if not pos.fills:
+        raise ValueError("position has no entry fill")
+    return pos
+
+
 class Firm:
     def __init__(self, settings: Settings = DEFAULT, use_grok: bool = False,
                  snapshot_fn=build_snapshot, pair_fn=dx.best_pair, tokens_fn=dx.latest_solana_tokens,
@@ -69,7 +89,7 @@ class Firm:
         self.sentiment_fn, self.send = sentiment_fn, send_fn
         self.book = Book(risk=settings.risk)
         self.meta: dict[str, dict] = {}            # symbol -> desk, address, entry liquidity
-        self.seen: set[str] = set()
+        self.seen: dict[str, None] = {}            # insertion-ordered set of screened addresses
         self.ms = alerts.MilestoneTracker(settings.milestones_usd)
         self.stats = {"screened": 0, "approved": 0, "rejected": 0, "started": now_iso(), "cycles": 0}
         self.heartbeat: dict[str, str] = {}
@@ -79,6 +99,49 @@ class Firm:
         # carry lifetime realised P&L across restarts so milestones don't re-fire
         self.lifetime_realised = sum(r.get("pnl_usd", 0) for r in self.read_trades())
         self.ms.check(self.lifetime_realised)
+        self.restored = self.load_positions()
+
+    # ---------- persistence ----------
+    def positions_path(self) -> str:
+        return os.path.join(STATE, "positions.json")
+
+    def save_positions(self) -> None:
+        """Everything needed to resume after a crash. Atomic write, called every cycle and on every entry."""
+        write_json(self.positions_path(), {
+            "saved": now_iso(),
+            "positions": [{**position_to_dict(pos), "meta": self.meta[sym]}
+                          for sym, pos in self.book.open.items() if not pos.closed],
+            "seen": list(self.seen)[-SEEN_KEEP:],
+            "last_brief_day": self.last_brief_day})
+
+    def load_positions(self) -> int:
+        """Reload open positions saved by a previous run. Returns how many were restored.
+        A bad record is skipped (and reported), never allowed to stop the firm starting."""
+        path = self.positions_path()
+        data = read_json(path, None)
+        if not isinstance(data, dict):
+            if os.path.exists(path):
+                print("positions.json unreadable: starting with no open positions")
+            return 0
+        self.seen.update(dict.fromkeys(a for a in data.get("seen", []) if isinstance(a, str)))
+        self.last_brief_day = data.get("last_brief_day") or ""
+        n = 0
+        for row in data.get("positions", []):
+            try:
+                meta = row["meta"]
+                if not meta.get("address") or not meta.get("desk"):
+                    raise ValueError("missing address/desk")
+                pos = position_from_dict(row, self.s)
+            except Exception as e:
+                print("skipped unreadable saved position:", e)
+                continue
+            if pos.closed or pos.symbol in self.book.open:
+                continue
+            self.book.open[pos.symbol] = pos
+            self.meta[pos.symbol] = meta
+            self.seen[meta["address"]] = None
+            n += 1
+        return n
 
     # ---------- journal ----------
     def day(self) -> str:
@@ -165,7 +228,7 @@ class Firm:
             addr = tok["tokenAddress"]
             if addr in self.seen:
                 continue
-            self.seen.add(addr)
+            self.seen[addr] = None
             ok, why = self.book.can_open(day_pnl=self.today_realised())
             if not ok:
                 return
@@ -204,6 +267,7 @@ class Firm:
             self.meta[snap.symbol] = {"desk": desk, "address": addr, "entry_liq": snap.liquidity_usd,
                                       "conviction": d.conviction, "risk_score": d.screen.risk_score, "last_price": px}
             self.stats["approved"] += 1
+            self.save_positions()                 # a crash right after an entry must not lose it
             self.send(f"PAPER BUY {snap.symbol} [{desk}/{d.mode}] conv {d.conviction:.2f} risk {d.screen.risk_score} @ {px:.8g}")
 
     def _log(self, snap, desk, d, sr, note: str) -> None:
@@ -240,12 +304,14 @@ class Firm:
             self.send("Founder flatten: all paper positions closed, entries paused.")
             control["paused"] = True
         self.settle()
+        self.save_positions()
         self.write_state(control)            # dashboard sees exits immediately, before a slow scan
         if not control.get("paused"):
             self.scan()
         self.stats["cycles"] += 1
         self.write_state(control)
         self.maybe_brief()
+        self.save_positions()
 
     def maybe_brief(self) -> None:
         local = datetime.now()
@@ -261,7 +327,8 @@ class Firm:
 
     def run(self, minutes: float | None = None) -> None:
         end = time.time() + minutes * 60 if minutes else None
-        self.send(f"Firm online (Phase 0 paper). Desks: Foot in the Door, Verification. Grok: {'on' if self.use_grok else 'off'}.")
+        self.send(f"Firm online (Phase 0 paper). Desks: Foot in the Door, Verification. Grok: {'on' if self.use_grok else 'off'}."
+                  + (f" Restored {self.restored} open position(s) from the last run." if self.restored else ""))
         try:
             while end is None or time.time() < end:
                 t0 = time.time()
@@ -273,7 +340,20 @@ class Firm:
         except KeyboardInterrupt:
             pass
         finally:
-            self.manage(flatten=True)
-            self.settle()
-            self.write_state({"paused": True})
-            self.send(f"Firm offline. Lifetime realised ${self.lifetime_realised:+.2f}.")
+            self.shutdown()
+
+    def shutdown(self) -> None:
+        """Clean stop (Ctrl+C, SIGTERM, end of --minutes): close every position we can price.
+        A position with no price right now stays open and saved, and resumes on the next start,
+        rather than being booked as a made-up total loss."""
+        ts = time.time()
+        for sym, pos in list(self.book.open.items()):
+            px = self._price(self.meta[sym]["address"])
+            if px:
+                pos._close(ts, px, "firm shutdown")
+        self.settle()
+        self.save_positions()
+        self.write_state({"paused": True})
+        left = len(self.book.open)
+        self.send(f"Firm offline. Lifetime realised ${self.lifetime_realised:+.2f}."
+                  + (f" {left} position(s) had no price and stay open for the next start." if left else ""))

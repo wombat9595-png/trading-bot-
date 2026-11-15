@@ -172,3 +172,117 @@ def test_patterns_report():
     out = report([{"desk": "verification", "mode": "standard", "conviction": 0.75, "risk_score": 10,
                    "exit_reason": "stop-loss", "hold_s": 60, "pnl_usd": -7.5}])
     assert "verification" in out and "too few" in out
+
+
+# ---------- restart survival (state/positions.json) ----------
+
+def test_open_position_survives_restart(dirs):
+    st, jr = dirs
+    mk, msgs = Market(), []
+    f1 = make(mk)
+    f1.cycle()
+    before = f1.book.open["GOOD"]
+    assert json.load(open(st / "positions.json"))["positions"][0]["symbol"] == "GOOD"
+
+    f2 = make(mk, msgs)                               # simulated crash: brand-new process, same state dir
+    assert f2.restored == 1
+    after = f2.book.open["GOOD"]
+    assert after.qty == before.qty and after.opened_ts == before.opened_ts and after.stake == before.stake
+    assert after.fills == before.fills and after.mode == before.mode
+    assert f2.meta["GOOD"] == f1.meta["GOOD"]
+    f2.cycle()
+    assert list(f2.book.open) == ["GOOD"]             # still managed, and not bought a second time
+    assert f2.stats["approved"] == 0
+    mk.liq = 10_000                                   # the restored position still gets rug watch
+    f2.cycle()
+    assert not f2.book.open
+    trades = [json.loads(l) for l in open(jr / "firm_trades.jsonl")]
+    assert len(trades) == 1 and trades[0]["exit_reason"].startswith("RUG WATCH")
+    assert trades[0]["desk"] == "verification" and trades[0]["entry_price"] == before.fills[0].price
+
+    f3 = make(mk)                                     # a closed trade must not come back from the dead
+    assert f3.restored == 0 and not f3.book.open
+
+
+def test_recovered_stake_and_floor_survive_restart(dirs):
+    mk = Market()
+    f1 = make(mk)
+    f1.cycle()
+    mk.price = 3.0                                    # well past +$10: stake comes out, floor locks in
+    f1.cycle()
+    p1 = f1.book.open["GOOD"]
+    assert p1.stake_recovered and p1.floor is not None and p1.cash_back > 0
+
+    f2 = make(mk)
+    p2 = f2.book.open["GOOD"]
+    assert p2.stake_recovered and p2.floor == p1.floor and p2.peak_pnl == p1.peak_pnl
+    assert p2.cash_back == p1.cash_back and p2.qty == p1.qty and len(p2.fills) == 2
+    mk.price = 0.5                                    # falls back through the floor after the restart
+    f2.cycle()
+    assert not f2.book.open
+    assert f2.book.closed[0].exit_reason.startswith("trailing floor")
+
+
+def test_position_left_open_too_long_closes_on_restart(dirs):
+    st, _ = dirs
+    mk = Market()
+    f1 = make(mk)
+    f1.cycle()
+    data = json.load(open(st / "positions.json"))
+    data["positions"][0]["opened_ts"] -= DEFAULT.risk.max_hold_seconds + 1   # Mac was off for a while
+    json.dump(data, open(st / "positions.json", "w"))
+    f2 = make(mk)
+    f2.cycle()
+    assert not f2.book.open and f2.book.closed[0].exit_reason == "max hold time"
+
+
+def test_corrupt_or_partial_positions_file_does_not_stop_startup(dirs):
+    st, _ = dirs
+    mk = Market()
+    os.makedirs(st, exist_ok=True)
+    (st / "positions.json").write_text("{not json")
+    assert make(mk).restored == 0
+
+    f1 = make(mk)
+    f1.cycle()
+    data = json.load(open(st / "positions.json"))
+    good = data["positions"][0]
+    data["positions"] = [{"symbol": "BROKEN"}, {**good, "symbol": "NOFILLS", "fills": []}, good]
+    json.dump(data, open(st / "positions.json", "w"))
+    f2 = make(mk)
+    assert f2.restored == 1 and list(f2.book.open) == ["GOOD"]
+
+
+def test_seen_tokens_and_brief_day_survive_restart(dirs):
+    mk = Market()
+    f1 = make(mk, tokens=[{"tokenAddress": "MintA", "_source": "profile"}])
+    f1.last_brief_day = "2099-01-01"
+    f1.cycle()
+    mk.alive = False
+    f1.cycle()                                        # rugged and closed
+    assert not f1.book.open
+    mk.alive = True
+    f2 = make(mk, tokens=[{"tokenAddress": "MintA", "_source": "profile"}])
+    assert "MintA" in f2.seen
+    assert f2.last_brief_day == f1.last_brief_day != ""   # no second morning brief after a restart
+    f2.cycle()
+    assert not f2.book.open and f2.stats["screened"] == 0   # not re-screened or re-bought
+
+
+def test_clean_shutdown_closes_priced_positions_and_keeps_unpriced(dirs):
+    st, jr = dirs
+    mk = Market()
+    f1 = make(mk)
+    f1.cycle()
+    f1.shutdown()                                     # Ctrl+C / SIGTERM with a live price: closed and journaled
+    assert not f1.book.open
+    assert json.loads(open(jr / "firm_trades.jsonl").readline())["exit_reason"] == "firm shutdown"
+    assert json.load(open(st / "positions.json"))["positions"] == []
+
+    f2 = make(mk, tokens=[{"tokenAddress": "MintB", "_source": "profile"}])
+    f2.cycle()
+    f2.pair_fn = lambda a: (_ for _ in ()).throw(ConnectionError())
+    f2.shutdown()                                     # no price available: do not invent a -$20 loss
+    assert "GOOD" in f2.book.open
+    f3 = make(mk)
+    assert f3.restored == 1
