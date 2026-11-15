@@ -36,7 +36,7 @@ src/desk/
   tracker.py           rug-catch scoreboard: % of flagged vs passed tokens that crashed 90%+
   data/                dexscreener.py, solana.py (RPC/Helius), onchain.py (creator + flow forensics), yahoo.py
   agents/              sentiment_grok.py (X sentiment), decision_claude.py (veto-only reviewer), alerts.py (Telegram)
-tests/                 42 tests, run with pytest
+tests/                 run with pytest
 journal/               decisions_*.jsonl + trades_*.csv (git-ignored)
 ```
 
@@ -68,5 +68,17 @@ Other commands (run inside `src/` with the venv active):
 | `python -m desk patterns` | Pattern Finder: what the winners have in common |
 | `python -m desk tracker` | Rug-catch scoreboard |
 | `python -m desk backtest` | TJR/Sci model on real hourly data |
+| `python -m desk costs` | Real slippage and fees from Jupiter quotes (read-only), next to CostConfig |
+| `python -m desk report` | Daily founder report: trades, P&L, drawdown, Phase 1 gate, one suggested change |
+
+## Run 24/7
+
+```bash
+bash scripts/service.sh start     # starts now, at every login, and again after a crash
+bash scripts/service.sh stop      # closes open paper positions and stays stopped
+bash scripts/service.sh status    # running? last heartbeat, open positions, last log lines
+```
+
+Logs go to `logs/`. The daily report is sent to Telegram at 9pm. Open positions are saved to `state/positions.json` every cycle, so a crash or reboot resumes them.
 
 To carry on with another Claude session, paste the prompt in `HANDOVER.md`.

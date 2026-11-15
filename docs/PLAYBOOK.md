@@ -58,11 +58,25 @@ All values are in USD. P&L is always measured at the price you could actually se
 | Max open positions | 5 | added |
 | Daily loss limit | −$30, then the desk stops for the day | added |
 
-### A4. Not yet coded (next build steps)
+### A4. Forensics: how each number is measured (validated on live data 15 Nov 2026)
 
-- **Creator wallet history, bundled-launch detection, wash-ratio measurement.** These need Helius' enhanced transactions API. Until they're built, those fields come back as *unknown* and add risk.
-- **Live rug watch.** This means LP removal, the dev wallet moving, and whale dumps. Today the only rug signal is a pair vanishing.
-- **Verification Desk, Pattern Finder and the smart-money tracker** from TSB §4.
+Checked against Solscan on three live Pump.fun tokens. Run `python -m desk check <mint>` to see every number.
+
+| Number | How it is measured (`data/onchain.py`, `data/solana.py`) |
+|---|---|
+| Top-10 holders % | 10 largest holders excluding liquidity pools and bonding curves only. A pool is an address DexScreener lists as a pair for the token, or an account owned by a known pool program. Lockers and other program-owned accounts count as holders |
+| Creator opening buy % | Net tokens the launch transaction's fee payer took in the launch slot, as a share of the supply minted at launch |
+| Bundled wallets | Other wallets that net-bought in the launch transaction **or in the same slot right after it**. Their share is added to the creator's for the 10% insider rule |
+| Creator wallet age | Time since the creator wallet's first ever transaction |
+| Unique buyers, single-wallet share, wash ratio | From the last 60 transactions that moved the token. Wash = volume from wallets with 2+ buys and 2+ sells |
+
+Needs a Helius key: it uses `getTransactionsForAddress` to fetch the launch in one call. Live tokens have 5,000 to 25,000 transactions in their first hour.
+
+### A5. Not yet coded
+
+- **Creator's prior launches and prior rugs.** Always unknown today, so that hard reject never fires.
+- **Live rug watch on-chain** (dev wallet moving, whale dumps). Today: liquidity down 50% since entry, or the pair vanishing, polled every 20 seconds.
+- **Smart-money tracker** from TSB §4.
 - **Staged exits** (TSB §7). Not needed until a single position is over about $1k.
 
 ---

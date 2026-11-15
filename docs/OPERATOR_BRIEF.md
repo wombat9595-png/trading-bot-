@@ -38,7 +38,7 @@ The bot doesn't skip phases. A phase only opens when the numbers say so.
 
 | Agent (from TSB §4) | Status |
 |---|---|
-| Holder Scout: all 6 red flags | Built. Creator, bundle and wash-trading forensics are coded and unit-tested but **not yet checked on live data** (needs a Helius key) |
+| Holder Scout: all 6 red flags | Built. Creator, bundle and wash-trading forensics checked against Solscan on live tokens (15 Nov 2026); three bugs fixed, with regression tests from real transactions. Creator's prior launches/rugs still not measured |
 | Foot in the Door | Built: $20 longs on graduated tokens, max 4 open |
 | Verification Desk | Built: enters on a fresh DexScreener profile ("dex paid"), exits when 5-minute buying fades. Max 2 open |
 | News Desk | Built: morning brief from the journal plus Grok's read of X |
@@ -46,7 +46,9 @@ The bot doesn't skip phases. A phase only opens when the numbers say so.
 | Alerts | Built: Telegram alerts on every trade, plus milestone hold-or-withdraw escalations |
 | Live rug watch | Built: liquidity down 50% since entry, or the pair vanishing, closes the position immediately. Polls every 20s; websocket comes later |
 | Control room | Built: http://127.0.0.1:8050 with pause, resume and flatten |
-| Survives restarts / runs 24/7 | Next (`HANDOVER.md` jobs 5–6) |
+| Survives restarts / runs 24/7 | Built: positions saved every cycle and reloaded; launchd service via `scripts/service.sh` |
+| Daily report | Built: `python -m desk report`, sent to Telegram at 9pm |
+| Real costs | Measured with `python -m desk costs`: venue fee 1.25% per side. Slippage and network fee still assumptions until real fills |
 | Execution adapter (live money) | Deliberately not built until the Phase 1 gate passes |
 
 ## 5. Security rules
