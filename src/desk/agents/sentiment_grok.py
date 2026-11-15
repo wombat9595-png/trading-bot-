@@ -76,3 +76,17 @@ def score_token(symbol: str, address: str, timeout: float = 60) -> Sentiment:
         )
     except (requests.RequestException, ValueError, KeyError, TypeError):
         return NEUTRAL
+
+
+def ask(prompt: str, timeout: float = 90) -> str | None:
+    """Free-form Grok question with live X search. None if unavailable."""
+    key = os.getenv("XAI_API_KEY")
+    if not key:
+        return None
+    try:
+        r = requests.post(URL, timeout=timeout, headers={"Authorization": f"Bearer {key}"}, json={
+            "model": MODEL, "input": [{"role": "user", "content": prompt}], "tools": [{"type": "x_search"}]})
+        r.raise_for_status()
+        return _extract_text(r.json()).strip() or None
+    except (requests.RequestException, ValueError):
+        return None

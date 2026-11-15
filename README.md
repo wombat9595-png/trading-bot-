@@ -25,47 +25,47 @@ src/desk/
   structure.py         swings, HH/HL/LH/LL, BOS, CHoCH, sweeps, FVG, sweep->BOS setups
   backtest.py          KPIs: win rate, RR, EV (R), max drawdown
   research.py          backtest Mandate B on real hourly data
-  paper.py             live paper-trading loop (real data, fake money, full journal)
+  firm.py              the firm: all desks in one loop, journal, state, control
+  dashboard.py + web/  control room at http://127.0.0.1:8050 (pause / resume / flatten)
+  strategies.py        desk routing: Verification Desk, Foot in the Door
+  news.py              News Desk morning brief (Grok + journal)
+  patterns.py          Pattern Finder
+  paper.py             token snapshot builder (+ legacy single-desk loop)
   bot.py               Holder Scout: the customer Telegram bot (/check, /watch, rug alerts, free/pro tiers)
   tracker.py           rug-catch scoreboard: % of flagged vs passed tokens that crashed 90%+
-  data/                dexscreener.py, solana.py (RPC/Helius), yahoo.py
+  data/                dexscreener.py, solana.py (RPC/Helius), onchain.py (creator + flow forensics), yahoo.py
   agents/              sentiment_grok.py (X sentiment), decision_claude.py (veto-only reviewer), alerts.py (Telegram)
-tests/                 32 tests, run with pytest
+tests/                 42 tests, run with pytest
 journal/               decisions_*.jsonl + trades_*.csv (git-ignored)
 ```
 
-## Run
+## Run (MacBook)
 
-Run each command from the repo root.
-
-1. Install:
+1. One-time setup, from the repo folder:
 
    ```bash
-   pip install -e ".[ai,dev]"
+   bash scripts/setup_mac.sh
    ```
 
-2. Create your local settings file, then fill in the keys:
+2. Open `.env` and paste your keys. Helius is required for trades; Telegram is for alerts; xAI is optional.
+
+3. Start the firm and the control room:
 
    ```bash
-   cp .env.example .env
+   bash scripts/start.sh
    ```
 
-3. Run the tests:
+4. Open http://127.0.0.1:8050 to watch positions, pause, resume or flatten.
 
-   ```bash
-   pytest -q
-   ```
+Other commands (run inside `src/` with the venv active):
 
-4. Backtest Mandate B (runs from `src/`):
+| Command | What it does |
+|---|---|
+| `python -m desk doctor` | Checks keys and connections |
+| `python -m desk check <mint>` | Holder Scout report on one token |
+| `python -m desk brief` | News Desk morning briefing |
+| `python -m desk patterns` | Pattern Finder: what the winners have in common |
+| `python -m desk tracker` | Rug-catch scoreboard |
+| `python -m desk backtest` | TJR/Sci model on real hourly data |
 
-   ```bash
-   cd src && python -m desk.research
-   ```
-
-5. Paper trade Mandate A for an hour. This loads the keys from `.env` first, then runs from `src/`:
-
-   ```bash
-   set -a && . ./.env && set +a && cd src && python -m desk.paper --minutes 60
-   ```
-
-   To also score X sentiment with Grok, add `--grok` at the end of that command.
+To carry on with another Claude session, paste the prompt in `HANDOVER.md`.

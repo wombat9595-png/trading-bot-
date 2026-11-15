@@ -37,7 +37,7 @@ class ScreenConfig:
     min_creator_wallet_age_days: float = 3.0
     max_single_wallet_trade_share: float = 0.15  # red flag 6: one wallet doing most of the buys
     max_wash_ratio: float = 0.35           # red flag 2: share of volume from round-tripping wallets
-    min_unique_buyers: int = 40
+    min_unique_buyers: int = 15           # distinct buyers in the last-60-transaction sample
     min_liquidity_usd: float = 5_000.0     # graduated tokens only
     require_holder_data: bool = True     # no top-10 data -> no trade. Concentration is the core edge.
     high_risk_score: int = 40              # >= this -> scalp mode
@@ -64,12 +64,25 @@ class StructureConfig:
 
 
 @dataclass(frozen=True)
+class DeskConfig:
+    """The agent desks from TSB section 4 and how much of the book each may use."""
+    foot_in_door_max_open: int = 4         # $20 longs across graduated tokens
+    verification_max_open: int = 2         # event trades on fresh DexScreener verification
+    verification_max_age_min: float = 180  # only tokens verified while young
+    verification_fade_ratio: float = 0.45  # exit when 5m buy share falls below this
+    rug_liquidity_drop_pct: float = 50.0   # live rug watch: LP down this much since entry -> dump
+    brief_hour_local: int = 8              # News Desk morning briefing
+    poll_seconds: int = 20
+
+
+@dataclass(frozen=True)
 class Settings:
     risk: RiskConfig = field(default_factory=RiskConfig)
     costs: CostConfig = field(default_factory=CostConfig)
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     structure: StructureConfig = field(default_factory=StructureConfig)
+    desks: DeskConfig = field(default_factory=DeskConfig)
     milestones_usd: tuple[float, ...] = (100, 500, 1_000, 5_000, 10_000, 50_000)
 
 

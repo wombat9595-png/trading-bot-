@@ -23,12 +23,12 @@ def _get(path: str):
 def latest_solana_tokens() -> list[dict]:
     """Newest token profiles + boosts on Solana (deduplicated)."""
     seen, out = set(), []
-    for path in ("/token-profiles/latest/v1", "/token-boosts/latest/v1"):
+    for path, src in (("/token-profiles/latest/v1", "profile"), ("/token-boosts/latest/v1", "boost")):
         try:
             for t in _get(path):
                 if t.get("chainId") == "solana" and t["tokenAddress"] not in seen:
                     seen.add(t["tokenAddress"])
-                    out.append(t)
+                    out.append({**t, "_source": src})
         except requests.RequestException:
             continue
     return out

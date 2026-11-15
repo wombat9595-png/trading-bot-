@@ -34,13 +34,20 @@ The bot doesn't skip phases. A phase only opens when the numbers say so.
 | Phase 1 → 2 | Seed capital withdrawn; Phase 1 profitable over ≥300 trades |
 | Phase 2 → 3 | Funded only from Phase 2 profits (Scaling Plan TM) |
 
-## 4. Build queue (in order)
+## 4. Build status
 
-1. **Helius enhanced-transactions adapter.** Gives creator history, opening-buy size, bundled-launch detection and the wash ratio. This turns 4 of the 6 red flags from "unknown" into measured.
-2. **Live rug watch.** Subscribes to the token's LP and dev wallet over websocket.
-3. **Daily report.** Win rate, EV, drawdown and costs, sent to Telegram each morning, with Claude writing the review.
-4. **Mandate B improvements:** session filter, FVG pullback entries, and a partial exit at 1R.
-5. Only after Phase 0 passes: an execution adapter (Jupiter or a Pump.fun swap) using a **separate hot wallet that only ever holds the live bankroll**.
+| Agent (from TSB §4) | Status |
+|---|---|
+| Holder Scout: all 6 red flags | Built. Creator, bundle and wash-trading forensics are coded and unit-tested but **not yet checked on live data** (needs a Helius key) |
+| Foot in the Door | Built: $20 longs on graduated tokens, max 4 open |
+| Verification Desk | Built: enters on a fresh DexScreener profile ("dex paid"), exits when 5-minute buying fades. Max 2 open |
+| News Desk | Built: morning brief from the journal plus Grok's read of X |
+| Pattern Finder | Built: win rate and average P&L by trait, and warns when the sample is too small |
+| Alerts | Built: Telegram alerts on every trade, plus milestone hold-or-withdraw escalations |
+| Live rug watch | Built: liquidity down 50% since entry, or the pair vanishing, closes the position immediately. Polls every 20s; websocket comes later |
+| Control room | Built: http://127.0.0.1:8050 with pause, resume and flatten |
+| Survives restarts / runs 24/7 | Next (`HANDOVER.md` jobs 5–6) |
+| Execution adapter (live money) | Deliberately not built until the Phase 1 gate passes |
 
 ## 5. Security rules
 

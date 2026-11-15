@@ -31,7 +31,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def build_snapshot(addr: str) -> TokenSnapshot | None:
+def build_snapshot(addr: str, deep: bool = True) -> TokenSnapshot | None:
     pair = dx.best_pair(addr)
     if not pair:
         return None
@@ -46,7 +46,29 @@ def build_snapshot(addr: str) -> TokenSnapshot | None:
         t.top10_pct, _ = solana.top10_pct(addr)
     except Exception:
         pass  # stays None -> hard reject under require_holder_data
+    if deep:
+        enrich_forensics(t)
     return t
+
+
+def enrich_forensics(t: TokenSnapshot) -> None:
+    """Creator + flow red flags. Many RPC calls: only run on tokens that survived the cheap checks."""
+    from .data import onchain
+    try:
+        supply = float(solana._rpc("getTokenSupply", [t.address])["value"]["uiAmount"] or 0)
+        cp = onchain.creator_profile(t.address, supply)
+        # A bundled launch IS insider accumulation: count the bundle wallets with the creator.
+        t.creator_initial_buy_pct = (cp.get("creator_initial_buy_pct") or 0) + (cp.get("bundled_pct") or 0)
+        t.creator_wallet_age_days = cp.get("creator_wallet_age_days")
+    except Exception:
+        pass
+    try:
+        fs = onchain.flow_stats(t.address)
+        t.unique_buyers = fs["unique_buyers"]
+        t.max_single_wallet_trade_share = fs["max_single_wallet_trade_share"]
+        t.wash_ratio = fs["wash_ratio"]
+    except Exception:
+        pass
 
 
 def main(minutes: float, poll: float, use_grok: bool) -> None:
