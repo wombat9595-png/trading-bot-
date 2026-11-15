@@ -39,6 +39,8 @@ class TokenSnapshot:
     price_change_5m_pct: float | None = None
     age_minutes: float | None = None
     price_usd: float | None = None
+    # Raw forensics behind the numbers above (creator, bundle wallets, sample size). Display only.
+    details: dict = field(default_factory=dict)
 
 
 @dataclass

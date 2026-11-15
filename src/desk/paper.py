@@ -32,9 +32,11 @@ def _now() -> str:
 
 
 def build_snapshot(addr: str, deep: bool = True) -> TokenSnapshot | None:
-    pair = dx.best_pair(addr)
+    all_pairs = dx.pairs(addr)
+    pair = dx.pick_best(all_pairs)
     if not pair:
         return None
+    pools = [p["pairAddress"] for p in all_pairs if p.get("pairAddress")]
     t = TokenSnapshot(address=addr, **dx.snapshot_fields(pair))
     try:
         mi = solana.mint_info(addr)
@@ -43,32 +45,35 @@ def build_snapshot(addr: str, deep: bool = True) -> TokenSnapshot | None:
     except Exception:
         pass
     try:
-        t.top10_pct, _ = solana.top10_pct(addr)
+        t.top10_pct, t.details["pools_excluded"] = solana.top10_pct(addr, pools)
     except Exception:
         pass  # stays None -> hard reject under require_holder_data
     if deep:
-        enrich_forensics(t)
+        enrich_forensics(t, pools)
     return t
 
 
-def enrich_forensics(t: TokenSnapshot) -> None:
-    """Creator + flow red flags. Many RPC calls: only run on tokens that survived the cheap checks."""
+def enrich_forensics(t: TokenSnapshot, known_pools=()) -> None:
+    """Creator + flow red flags. Only run on tokens that survived the cheap checks.
+    A failure leaves the field unknown (penalised by the screen) and records why in details."""
     from .data import onchain
     try:
         supply = float(solana._rpc("getTokenSupply", [t.address])["value"]["uiAmount"] or 0)
-        cp = onchain.creator_profile(t.address, supply)
+        cp = onchain.creator_profile(t.address, supply, known_pools)
         # A bundled launch IS insider accumulation: count the bundle wallets with the creator.
         t.creator_initial_buy_pct = (cp.get("creator_initial_buy_pct") or 0) + (cp.get("bundled_pct") or 0)
         t.creator_wallet_age_days = cp.get("creator_wallet_age_days")
-    except Exception:
-        pass
+        t.details["creator"] = cp
+    except Exception as e:
+        t.details["creator_error"] = str(e)[:200]
     try:
-        fs = onchain.flow_stats(t.address)
+        fs = onchain.flow_stats(t.address, known_pools=known_pools)
         t.unique_buyers = fs["unique_buyers"]
         t.max_single_wallet_trade_share = fs["max_single_wallet_trade_share"]
         t.wash_ratio = fs["wash_ratio"]
-    except Exception:
-        pass
+        t.details["flow"] = fs
+    except Exception as e:
+        t.details["flow_error"] = str(e)[:200]
 
 
 def main(minutes: float, poll: float, use_grok: bool) -> None:

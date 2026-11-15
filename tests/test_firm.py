@@ -134,7 +134,8 @@ def test_creator_profile_counts_bundles(monkeypatch):
             return launch
         raise AssertionError(method)
     monkeypatch.setattr(oc, "_rpc", rpc)
-    monkeypatch.setattr(oc, "program_owned_set", lambda owners: {"curvePDA"})
+    monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {"curvePDA"})
+    monkeypatch.setattr(oc, "_fast_ok", False)       # standard-RPC path (no Helius getTransactionsForAddress)
     cp = creator_profile("M", 1000)
     assert cp["creator"] == "dev" and cp["creator_initial_buy_pct"] == 6.0
     assert cp["bundled_wallets"] == 1 and cp["bundled_pct"] == 4.0
@@ -315,7 +316,8 @@ def test_creator_profile_counts_same_slot_buys_after_launch(monkeypatch):
             return txs[params[0]]
         raise AssertionError(method)
     monkeypatch.setattr(oc, "_rpc", rpc)
-    monkeypatch.setattr(oc, "program_owned_set", lambda owners: {"curvePDA"})
+    monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {"curvePDA"})
+    monkeypatch.setattr(oc, "_fast_ok", False)       # standard-RPC path (no Helius getTransactionsForAddress)
     cp = creator_profile("M", 1000)
     assert cp["creator"] == "dev"
     assert cp["creator_initial_buy_pct"] == pytest.approx(7.0)        # 50 in the launch tx + 20 same slot
@@ -332,7 +334,8 @@ def test_same_slot_buy_then_sell_is_not_counted_as_holding(monkeypatch):
            "sell": _tx("bot", "M", {"curvePDA": 960, "bot": 40}, {"curvePDA": 1000, "bot": 0})}
     sigs = [{"signature": k, "slot": 7, "blockTime": 1_700_000_000} for k in ("sell", "buy", "launch")]
     monkeypatch.setattr(oc, "_rpc", lambda m, p, retries=4: (sigs if p[0] == "M" else []) if m == "getSignaturesForAddress" else txs[p[0]])
-    monkeypatch.setattr(oc, "program_owned_set", lambda owners: {"curvePDA"})
+    monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {"curvePDA"})
+    monkeypatch.setattr(oc, "_fast_ok", False)       # standard-RPC path (no Helius getTransactionsForAddress)
     cp = creator_profile("M", 1000)
     assert cp["bundled_wallets"] == 0 and cp["bundled_pct"] == 0 and cp["creator_initial_buy_pct"] == 0
 
@@ -375,3 +378,80 @@ def test_hard_fail_token_is_never_traded(dirs):
     f.snapshot_fn = lambda a, deep=True: TokenSnapshot(a, symbol="RUG", **{**GOOD, "mint_authority_revoked": False})
     f.cycle()
     assert not f.book.open and f.stats["approved"] == 0
+
+
+# ---------- regression tests from real chain data (captured 15 Nov 2026) ----------
+
+FIX = os.path.join(os.path.dirname(__file__), "fixtures", "twert_launch.json")
+TWERT = "8WvWwttzaLfW1nbjx6wmYL5jozWpvy95WktAg5cipump"
+TWERT_CURVE = "5EnKvoJ3PfUv9FftkZU4mvzPHXWYWQ8MSU3GuqtiQ6Ni"
+
+
+def _helius_rpc(calls):
+    """A Helius-like RPC serving the real first 12 transactions of the token 'twert'."""
+    txs = json.load(open(FIX))["txs"]
+
+    def rpc(method, params, retries=4):
+        calls.append((method, params))
+        if method == "getTransactionsForAddress":
+            addr, opts = params
+            if addr != TWERT:                                  # creator wallet's first transaction
+                return {"data": [{"signature": "first", "slot": 1, "blockTime": 1_794_170_000}]}
+            assert opts["sortOrder"] == "asc"
+            return {"data": txs[:opts["limit"]]}
+        raise AssertionError(method)
+    return rpc
+
+
+def test_real_launch_same_slot_bundle_is_found(monkeypatch):
+    """Live bug, 15 Nov 2026: this token showed 'couldn't measure creator' and a green verdict.
+    Truth (checked on Solscan): creator AmTDr... bought 2M (0.2%) in the launch transaction, then
+    HFKGP... bought 167,021,252 and 7kETf... bought 69.4M in the SAME slot: 23.65% of supply."""
+    import desk.data.onchain as oc
+    calls = []
+    monkeypatch.setattr(oc, "_rpc", _helius_rpc(calls))
+    monkeypatch.setattr(oc, "_fast_ok", True)
+    monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {TWERT_CURVE} & set(owners))
+    cp = creator_profile(TWERT, 999_999_999.999999)
+    assert cp["creator"] == "AmTDrHs26a8F3e7kvtXLgt3Fjgxp3aPyG2nj8C2tE3h1"
+    assert cp["launch_signature"].startswith("34qzP2Hgf9dj")
+    assert cp["creator_initial_buy_pct"] == pytest.approx(0.2, abs=1e-6)
+    assert cp["bundled_wallets"] == 2 and cp["bundled_in_launch_tx"] == 0 and cp["bundled_same_slot"] == 2
+    assert cp["bundled_pct"] == pytest.approx(23.646, abs=0.001)
+    assert cp["same_slot_txs"] == 4 and not cp["same_slot_truncated"]     # 2 buys + 2 that moved no twert; 1 failed one skipped
+    assert cp["creator_wallet_age_days"] > 6
+    # the launch was found in ONE call, not by paging through thousands of signatures
+    assert [m for m, _ in calls].count("getTransactionsForAddress") == 2 and "getSignaturesForAddress" not in [m for m, _ in calls]
+
+
+def test_version_1_transactions_are_requested(monkeypatch):
+    """Live bug, 15 Nov 2026: every flow check died with 'Transaction version (1) is not supported'."""
+    import desk.data.onchain as oc
+    seen = []
+
+    def rpc(method, params, retries=4):
+        seen.append((method, params))
+        if method == "getTransactionsForAddress":
+            raise RuntimeError({"code": -32601, "message": "Method not found"})
+        if method == "getSignaturesForAddress":
+            return [{"signature": "s1", "slot": 5}]
+        return _tx("p", "M", {"POOL": 100}, {"POOL": 90, "buyer": 10})
+    monkeypatch.setattr(oc, "_rpc", rpc)
+    monkeypatch.setattr(oc, "_fast_ok", True)
+    monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {"POOL"})
+    fs = oc.flow_stats("M", n=5)
+    assert fs["unique_buyers"] == 1 and fs["sample_txs"] == 1          # fell back to the standard RPC path
+    get_tx_opts = [p[1] for m, p in seen if m == "getTransaction"][0]
+    assert get_tx_opts["maxSupportedTransactionVersion"] >= 1
+    assert oc._fast_ok is False                                        # and remembers not to ask again
+
+
+def test_opening_buy_uses_launch_supply_not_todays_burned_supply(monkeypatch):
+    """Live: TOOLS creator bought 20M of the 1,000M minted = 2.00%. Against today's burned-down
+    supply (947.4M) the old code said 2.11%."""
+    import desk.data.onchain as oc
+    launch = _tx("dev", "M", {}, {"curvePDA": 980_000_000, "dev": 20_000_000})
+    monkeypatch.setattr(oc, "_rpc", lambda m, p, retries=4: [{"signature": "s", "slot": 1, "blockTime": 1}] if m == "getSignaturesForAddress" else launch)
+    monkeypatch.setattr(oc, "_fast_ok", False)
+    monkeypatch.setattr(oc, "pool_set", lambda owners, known_pools=(): {"curvePDA"})
+    assert creator_profile("M", 947_437_182.15)["creator_initial_buy_pct"] == pytest.approx(2.0)

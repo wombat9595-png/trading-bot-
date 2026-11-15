@@ -59,6 +59,28 @@ def doctor() -> None:
             print("-- ", "Telegram:", e)
 
 
+def measured(snap) -> str:
+    """The raw numbers behind a Holder Scout verdict, for checking against Solscan."""
+    f = lambda v, fmt: "unknown" if v is None else format(v, fmt)
+    cp, fl = snap.details.get("creator") or {}, snap.details.get("flow") or {}
+    out = ["MEASURED (compare with solscan.io/token/" + snap.address + ")",
+           f"  top-10 holders          {f(snap.top10_pct, '.2f')}% of supply ({snap.details.get('pools_excluded', '?')} pool/curve account(s) excluded)",
+           f"  creator wallet          {cp.get('creator', 'unknown')}",
+           f"  creator opening buy     {f(cp.get('creator_initial_buy_pct'), '.2f')}% of launch supply",
+           f"  bundled wallets         {cp.get('bundled_wallets', 'unknown')} ({cp.get('bundled_in_launch_tx', '?')} in the launch transaction, "
+           f"{cp.get('bundled_same_slot', '?')} same slot) holding {f(cp.get('bundled_pct'), '.2f')}%"
+           + (" [launch slot too busy: partial count]" if cp.get("same_slot_truncated") else ""),
+           f"  insider total           {f(snap.creator_initial_buy_pct, '.2f')}% (creator + bundle; this is what the screen scores)",
+           f"  creator wallet age      {f(snap.creator_wallet_age_days, '.1f')} days",
+           f"  unique buyers           {f(snap.unique_buyers, 'd')} in the last {fl.get('sample_txs', '?')} token-moving transactions",
+           f"  biggest wallet's share  {f(snap.max_single_wallet_trade_share, '.1%')} of trades",
+           f"  wash ratio              {f(snap.wash_ratio, '.1%')} of volume from wallets with 2+ buys and 2+ sells"]
+    for k in ("creator_error", "flow_error"):
+        if snap.details.get(k):
+            out.append(f"  !! {k}: {snap.details[k]}")
+    return "\n".join(out)
+
+
 def main() -> None:
     load_env()
     ap = argparse.ArgumentParser(prog="desk")
@@ -99,6 +121,8 @@ def main() -> None:
         from .screener import screen
         snap = build_snapshot(a.mint)
         print(verdict(snap, screen(snap, DEFAULT.screen)) if snap else "No pair found.")
+        if snap:
+            print("\n" + measured(snap))
     elif a.cmd == "brief":
         from .agents.alerts import send
         from .news import morning_brief

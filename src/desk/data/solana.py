@@ -45,26 +45,38 @@ def mint_info(mint: str) -> dict:
 
 SYSTEM_PROGRAM = "11111111111111111111111111111111"
 
+# Programs whose accounts hold tokens as a market, not as a person. Each one was seen owning a
+# pool or curve on live tokens on 15 Nov 2026. Anything NOT on this list is counted as a holder.
+POOL_PROGRAMS = {
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": "Pump.fun bonding curve",
+    "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": "Pump.fun AMM (PumpSwap)",
+    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo": "Meteora DLMM",
+}
 
-def program_owned_set(owners: list[str]) -> set[str]:
-    """Which of these addresses are accounts owned by a program (pool, bonding curve, locker),
-    i.e. not a person's wallet. Missing accounts count as wallets (conservative)."""
-    uniq = list(dict.fromkeys(owners))
-    out: set[str] = set()
-    for i in range(0, len(uniq), 100):
-        chunk = uniq[i:i + 100]
+
+def pool_set(owners: list[str], known_pools=()) -> set[str]:
+    """Which of these token-account owners are liquidity pools or bonding curves, not holders.
+
+    An owner is a pool only if (a) DexScreener lists that address as a pair for this token
+    (`known_pools`), or (b) the account is owned by a program in POOL_PROGRAMS. Everything else
+    counts as a holder, including accounts owned by other programs: lockers, vesting contracts
+    and self-owned token accounts are still somebody's tokens. (Until 15 Nov 2026 this excluded
+    every program-owned account, which hid a creator's 20M-token holding on a live token.)
+    """
+    uniq = list(dict.fromkeys(o for o in owners if o))
+    out = {o for o in uniq if o in set(known_pools)}
+    rest = [o for o in uniq if o not in out]
+    for i in range(0, len(rest), 100):
+        chunk = rest[i:i + 100]
         meta = _rpc("getMultipleAccounts", [chunk, {"encoding": "base64", "dataSlice": {"offset": 0, "length": 0}}])["value"]
-        out |= {o for o, m in zip(chunk, meta) if m and m.get("owner") != SYSTEM_PROGRAM}
+        out |= {o for o, m in zip(chunk, meta) if m and m.get("owner") in POOL_PROGRAMS}
     return out
 
 
-def top10_pct(mint: str) -> tuple[float, int]:
-    """% of supply held by the 10 largest HOLDERS, excluding program-owned accounts
-    (Pump.fun bonding curve, AMM pool vaults, lockers). Returns (pct, n_excluded).
-
-    Method: largest token accounts -> their owner -> if that owner address is itself an
-    account owned by a program other than the System Program, it is a pool/curve, not a person.
-    Owners with no account at all are counted as holders (conservative: more concentration).
+def top10_pct(mint: str, known_pools=()) -> tuple[float, int]:
+    """% of supply held by the 10 largest HOLDERS, excluding liquidity pools and bonding curves
+    (see pool_set). Returns (pct, n_excluded). A token account whose owner can't be read is
+    counted as a holder (conservative: more concentration).
     """
     supply = float(_rpc("getTokenSupply", [mint])["value"]["uiAmount"] or 0)
     accts = _rpc("getTokenLargestAccounts", [mint])["value"]
@@ -72,10 +84,10 @@ def top10_pct(mint: str) -> tuple[float, int]:
         raise RuntimeError("no supply/holder data")
     tok = _rpc("getMultipleAccounts", [[a["address"] for a in accts], {"encoding": "jsonParsed"}])["value"]
     owners = [((t or {}).get("data") or {}).get("parsed", {}).get("info", {}).get("owner") for t in tok]
-    program_owned = program_owned_set([o for o in owners if o])
+    pools = pool_set([o for o in owners if o], known_pools)
     held, excluded = [], 0
     for a, o in zip(accts, owners):
-        if o in program_owned:
+        if o in pools:
             excluded += 1
             continue
         held.append(float(a["uiAmount"] or 0))

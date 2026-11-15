@@ -34,12 +34,19 @@ def latest_solana_tokens() -> list[dict]:
     return out
 
 
-def best_pair(token: str) -> dict | None:
-    pairs = _get(f"/token-pairs/v1/solana/{token}") or []
-    if not pairs:
+def pairs(token: str) -> list[dict]:
+    return _get(f"/token-pairs/v1/solana/{token}") or []
+
+
+def pick_best(all_pairs: list[dict]) -> dict | None:
+    if not all_pairs:
         return None
     # Prefer the deepest open-market pool; fall back to the bonding curve pair.
-    return max(pairs, key=lambda p: ((p.get("liquidity") or {}).get("usd") or 0, p.get("marketCap") or 0))
+    return max(all_pairs, key=lambda p: ((p.get("liquidity") or {}).get("usd") or 0, p.get("marketCap") or 0))
+
+
+def best_pair(token: str) -> dict | None:
+    return pick_best(pairs(token))
 
 
 def snapshot_fields(pair: dict) -> dict:
