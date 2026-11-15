@@ -25,7 +25,7 @@ A token is screened against TSB's six red flags. Unknown data is penalised, neve
 | 5 | Creator profile | More than 5 prior launches | +20 risk |
 | 2 | Wash trading | Over 35% of volume is self-trading | +30 risk |
 | 6 | Fake social proof | One wallet makes over 15% of all trades | +25 risk |
-| 6 | Fake social proof | Under 40 unique buyers | +10 risk |
+| 6 | Fake social proof | Under 15 unique buyers in the last 60 transactions | +10 risk |
 | 6 | Fake social proof | No X account | +10 risk |
 
 - **Risk 0–39:** standard mode
