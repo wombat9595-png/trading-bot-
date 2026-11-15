@@ -286,3 +286,92 @@ def test_clean_shutdown_closes_priced_positions_and_keeps_unpriced(dirs):
     assert "GOOD" in f2.book.open
     f3 = make(mk)
     assert f3.restored == 1
+
+
+# ---------- same-slot bundle detection ----------
+
+def test_creator_profile_counts_same_slot_buys_after_launch(monkeypatch):
+    import desk.data.onchain as oc
+    txs = {
+        "launch": _tx("dev", "M", {}, {"curvePDA": 900, "dev": 50, "sniper_in_tx": 10}),
+        "same1": _tx("bundleA", "M", {"curvePDA": 900}, {"curvePDA": 870, "bundleA": 30}),
+        "same2": _tx("dev", "M", {"curvePDA": 870, "dev": 50}, {"curvePDA": 850, "dev": 70}),   # dev buys again
+        "same3": _tx("flipper", "M", {"curvePDA": 850}, {"curvePDA": 850}),                        # no net change
+        "later": _tx("public", "M", {"curvePDA": 850}, {"curvePDA": 800, "public": 50}),          # next slot: not a bundle
+    }
+    sigs = [{"signature": "later", "slot": 101, "blockTime": 1_700_000_001},
+            {"signature": "failed", "slot": 100, "blockTime": 1_700_000_000, "err": {"x": 1}},
+            {"signature": "same3", "slot": 100, "blockTime": 1_700_000_000},
+            {"signature": "same2", "slot": 100, "blockTime": 1_700_000_000},
+            {"signature": "same1", "slot": 100, "blockTime": 1_700_000_000},
+            {"signature": "launch", "slot": 100, "blockTime": 1_700_000_000}]
+    fetched = []
+
+    def rpc(method, params, retries=4):
+        if method == "getSignaturesForAddress":
+            return sigs if params[0] == "M" else [{"signature": "w", "slot": 1, "blockTime": 1_600_000_000}]
+        if method == "getTransaction":
+            fetched.append(params[0])
+            return txs[params[0]]
+        raise AssertionError(method)
+    monkeypatch.setattr(oc, "_rpc", rpc)
+    monkeypatch.setattr(oc, "program_owned_set", lambda owners: {"curvePDA"})
+    cp = creator_profile("M", 1000)
+    assert cp["creator"] == "dev"
+    assert cp["creator_initial_buy_pct"] == pytest.approx(7.0)        # 50 in the launch tx + 20 same slot
+    assert cp["bundled_wallets"] == 2 and cp["bundled_pct"] == pytest.approx(4.0)   # sniper_in_tx 10 + bundleA 30
+    assert cp["bundled_in_launch_tx"] == 1 and cp["bundled_same_slot"] == 1
+    assert cp["same_slot_txs"] == 3 and not cp["same_slot_truncated"]
+    assert "later" not in fetched and "failed" not in fetched
+
+
+def test_same_slot_buy_then_sell_is_not_counted_as_holding(monkeypatch):
+    import desk.data.onchain as oc
+    txs = {"launch": _tx("dev", "M", {}, {"curvePDA": 1000}),
+           "buy": _tx("bot", "M", {"curvePDA": 1000}, {"curvePDA": 960, "bot": 40}),
+           "sell": _tx("bot", "M", {"curvePDA": 960, "bot": 40}, {"curvePDA": 1000, "bot": 0})}
+    sigs = [{"signature": k, "slot": 7, "blockTime": 1_700_000_000} for k in ("sell", "buy", "launch")]
+    monkeypatch.setattr(oc, "_rpc", lambda m, p, retries=4: (sigs if p[0] == "M" else []) if m == "getSignaturesForAddress" else txs[p[0]])
+    monkeypatch.setattr(oc, "program_owned_set", lambda owners: {"curvePDA"})
+    cp = creator_profile("M", 1000)
+    assert cp["bundled_wallets"] == 0 and cp["bundled_pct"] == 0 and cp["creator_initial_buy_pct"] == 0
+
+
+# ---------- Phase 1 gate: hard-fail tokens traded ----------
+
+def test_trade_rows_record_hard_fail_and_gate_counts_them(dirs):
+    st, jr = dirs
+    mk = Market()
+    f = make(mk)
+    f.cycle()
+    assert f.meta["GOOD"]["hard_fail"] is False
+    mk.alive = False
+    f.cycle()
+    row = json.loads(open(jr / "firm_trades.jsonl").readline())
+    assert row["hard_fail"] is False
+    g = dash.summary()["gate"]
+    assert g["hard_fail_traded"] == 0 and g["hard_fail_ok"] and not g["passed"]
+
+    with open(jr / "firm_trades.jsonl", "a") as fh:     # a hard-fail trade and an unauditable one
+        fh.write(json.dumps({"closed_utc": "2026-11-15T00:00:00+00:00", "symbol": "BAD", "pnl_usd": 3, "hard_fail": True}) + "\n")
+        fh.write(json.dumps({"closed_utc": "2026-11-15T00:00:00+00:00", "symbol": "OLD", "pnl_usd": 3}) + "\n")
+    g = dash.summary()["gate"]
+    assert g["hard_fail_traded"] == 1 and g["hard_fail_unaudited"] == 1 and not g["hard_fail_ok"]
+
+
+def test_gate_needs_all_four():
+    good = [{"pnl_usd": 1.0, "hard_fail": False}] * 200
+    assert dash.phase1_gate(good, 50.0)["passed"]
+    assert not dash.phase1_gate(good[:199], 50.0)["passed"]
+    assert not dash.phase1_gate(good, 100.0)["passed"]
+    assert not dash.phase1_gate([{"pnl_usd": -1.0, "hard_fail": False}] * 200, 50.0)["passed"]
+    assert not dash.phase1_gate(good[:199] + [{"pnl_usd": 1.0, "hard_fail": True}], 50.0)["passed"]
+    assert not dash.phase1_gate(good[:199] + [{"pnl_usd": 1.0}], 50.0)["passed"]
+
+
+def test_hard_fail_token_is_never_traded(dirs):
+    mk = Market()
+    f = make(mk)
+    f.snapshot_fn = lambda a, deep=True: TokenSnapshot(a, symbol="RUG", **{**GOOD, "mint_authority_revoked": False})
+    f.cycle()
+    assert not f.book.open and f.stats["approved"] == 0

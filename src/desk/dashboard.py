@@ -53,7 +53,26 @@ def summary() -> dict:
     return {"n": n, "win_rate": (sum(p > 0 for p in pnl) / n) if n else None,
             "ev": (sum(pnl) / n) if n else None, "total": round(sum(pnl), 2), "max_dd": round(dd, 2),
             "curve": curve[-500:], "desks": desks, "recent": trades[-25:][::-1],
-            "gate": {"trades_needed": max(0, 200 - n), "ev_positive": bool(n and sum(pnl) > 0), "dd_ok": dd < 100}}
+            "gate": phase1_gate(trades, dd)}
+
+
+GATE_TRADES, GATE_MAX_DD = 200, 100.0
+
+
+def phase1_gate(trades: list[dict], max_dd: float) -> dict:
+    """The four Phase 0 -> 1 conditions, from the journal. P&L is already net of CostConfig.
+
+    hard_fail_traded counts trades whose entry screen was a hard fail. The engine refuses those,
+    so this should stay 0; it is counted from the journal rather than assumed. A trade row with no
+    hard_fail field cannot be audited and blocks the gate until explained.
+    """
+    n, total = len(trades), sum(t["pnl_usd"] for t in trades)
+    hard = sum(t.get("hard_fail") is True for t in trades)
+    unaudited = sum(t.get("hard_fail") is None for t in trades)
+    g = {"trades_needed": max(0, GATE_TRADES - n), "ev_positive": bool(n and total > 0), "dd_ok": max_dd < GATE_MAX_DD,
+         "hard_fail_traded": hard, "hard_fail_unaudited": unaudited, "hard_fail_ok": hard == 0 and unaudited == 0}
+    g["passed"] = bool(not g["trades_needed"] and g["ev_positive"] and g["dd_ok"] and g["hard_fail_ok"])
+    return g
 
 
 class Handler(BaseHTTPRequestHandler):

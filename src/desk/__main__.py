@@ -7,6 +7,8 @@
   python -m desk patterns                     Pattern Finder report
   python -m desk backtest                     TJR/Sci model on real hourly data
   python -m desk tracker                      rug-catch scoreboard
+  python -m desk costs                        real slippage + fees from Jupiter quotes (read-only)
+  python -m desk report [--no-send]           daily founder report (prints + Telegram)
   python -m desk doctor                       checks keys and connections
 """
 from __future__ import annotations
@@ -72,6 +74,8 @@ def main() -> None:
     sub.add_parser("backtest")
     sub.add_parser("tracker")
     sub.add_parser("doctor")
+    sub.add_parser("costs")
+    sub.add_parser("report").add_argument("--no-send", action="store_true")
     a = ap.parse_args()
 
     if a.cmd == "run":
@@ -113,6 +117,12 @@ def main() -> None:
         tmain(24)
     elif a.cmd == "doctor":
         doctor()
+    elif a.cmd == "costs":
+        from .costs import main as cmain
+        cmain()
+    elif a.cmd == "report":
+        from .report import main as rmain
+        rmain(send=not a.no_send)
 
 
 if __name__ == "__main__":

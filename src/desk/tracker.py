@@ -33,28 +33,51 @@ def score(rows: list[dict], prices: dict[str, float | None]) -> dict:
     return out
 
 
-def main(hours: float) -> None:
+MAX_TOKENS = 600     # cap on price lookups per run, so the daily report always finishes
+
+
+def load_rows(hours: float) -> list[dict]:
     cutoff = time.time() - hours * 3600
     rows = []
-    for f in glob.glob(os.path.join(JOURNAL, "decisions_*.jsonl")):
+    for f in sorted(glob.glob(os.path.join(JOURNAL, "decisions_*.jsonl"))):
         for line in open(f):
             r = json.loads(line)
             if r.get("price_usd") and datetime.fromisoformat(r["ts"]).timestamp() <= cutoff:
                 rows.append(r)
+    return rows
+
+
+def render(s: dict, hours: float, sampled_from: int | None = None) -> str:
+    out = [f"RUG-CATCH SCOREBOARD (tokens judged {hours:.0f}h+ ago)"]
+    for k, (c, n) in s.items():
+        out.append(f"{k:8}: {c}/{n} crashed 90%+ ({100 * c / n:.0f}%)" if n else f"{k:8}: none yet")
+    if sampled_from:
+        out.append(f"(most recent {MAX_TOKENS} of {sampled_from} tokens)")
+    return "\n".join(out)
+
+
+def run(hours: float = 24) -> str:
+    rows = load_rows(hours)
     if not rows:
-        print(f"No priced decisions older than {hours}h yet. Run the paper desk first.")
-        return
+        return f"No priced decisions older than {hours:.0f}h yet. Run the paper desk first."
+    first: dict[str, dict] = {}
+    for r in rows:
+        first.setdefault(r["address"], r)             # judge each token once, at its first decision
+    total = len(first)
+    rows = list(first.values())[-MAX_TOKENS:]
     prices = {}
     for r in rows:
-        if r["address"] not in prices:
-            try:
-                prices[r["address"]] = dx.price(r["address"])
-            except Exception:
-                prices[r["address"]] = None
-            time.sleep(0.25)
-    s = score(rows, prices)
-    for k, (c, n) in s.items():
-        print(f"{k:8}: {c}/{n} crashed 90%+ ({100 * c / n:.0f}%)" if n else f"{k}: none")
+        try:
+            prices[r["address"]] = dx.price(r["address"])
+        except Exception:
+            continue                                  # no answer is not a crash: leave it out
+        time.sleep(0.25)
+    rows = [r for r in rows if r["address"] in prices]
+    return render(score(rows, prices), hours, total if total > MAX_TOKENS else None)
+
+
+def main(hours: float) -> None:
+    print(run(hours))
 
 
 if __name__ == "__main__":

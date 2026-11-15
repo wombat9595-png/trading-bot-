@@ -68,7 +68,7 @@ svg{width:100%;height:160px;display:block}
     <div><span>200+ paper trades</span><span id="g-n">–</span></div>
     <div><span>Positive EV after costs</span><span id="g-ev">–</span></div>
     <div><span>Max drawdown &lt; $100</span><span id="g-dd">–</span></div>
-    <div><span>Zero hard-fail tokens traded</span><span>enforced in code</span></div>
+    <div><span>Zero hard-fail tokens traded</span><span id="g-hf">–</span></div>
   </div>
 
   <div class="panel s8"><h2>Open positions</h2><div class="tw"><table><thead><tr><th>Token</th><th>Desk</th><th>Mode</th><th>Age</th><th>Entry</th><th>Price</th><th>P&amp;L</th><th>Floor</th><th>Stake back</th></tr></thead><tbody id="open"></tbody></table></div></div>
@@ -122,6 +122,7 @@ async function refresh(){
     $('g-n').innerHTML=sm.gate.trades_needed?`<span class="tag no">${sm.n}/200</span>`:'<span class="tag ok">met</span>';
     $('g-ev').innerHTML=sm.gate.ev_positive?'<span class="tag ok">yes</span>':'<span class="tag no">not yet</span>';
     $('g-dd').innerHTML=sm.gate.dd_ok?'<span class="tag ok">yes</span>':'<span class="tag no">no</span>';
+    $('g-hf').innerHTML=sm.gate.hard_fail_ok?'<span class="tag ok">0 traded</span>':`<span class="tag no">${sm.gate.hard_fail_traded} traded${sm.gate.hard_fail_unaudited?', '+sm.gate.hard_fail_unaudited+' unaudited':''}</span>`;
     $('open').innerHTML=open.length?open.map(p=>`<tr><td>${esc(p.symbol)}</td><td>${esc(p.desk)}</td><td>${esc(p.mode)}</td><td class="n">${Math.round(p.age_s/60)}m</td><td class="n">${(+p.entry).toPrecision(4)}</td><td class="n">${(+p.price).toPrecision(4)}</td><td class="n ${cls(p.pnl_usd)}">${usd(p.pnl_usd)}</td><td class="n">${p.floor==null?'–':'$'+p.floor}</td><td>${p.stake_recovered?'<span class="tag ok">yes</span>':'no'}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">No open positions</td></tr>';
     const names={holder_scout:'Holder Scout',risk_desk:'Risk desk',news_desk:'News Desk (Grok)'};
     $('beats').innerHTML=Object.entries(names).map(([k,v])=>`<div class="beat"><span>${v}</span><span>${ago((st.heartbeat||{})[k])}</span></div>`).join('');

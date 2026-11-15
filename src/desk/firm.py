@@ -209,7 +209,8 @@ class Firm:
                    "mode": pos.mode, "hold_s": int(pos.fills[-1].ts - pos.opened_ts), "pnl_usd": round(pos.realised_pnl, 2),
                    "exit_reason": pos.exit_reason, "stake_recovered": pos.stake_recovered,
                    "entry_price": pos.fills[0].price, "fills": len(pos.fills),
-                   "conviction": m.get("conviction"), "risk_score": m.get("risk_score")}
+                   "conviction": m.get("conviction"), "risk_score": m.get("risk_score"),
+                   "hard_fail": m.get("hard_fail")}
             append_jsonl(self.trades_path(), row)
             self.lifetime_realised += pos.realised_pnl
             self.send(f"CLOSED {pos.symbol} [{row['desk']}] {row['exit_reason']} | ${row['pnl_usd']:+.2f}")
@@ -265,7 +266,8 @@ class Firm:
                 continue
             self.book.open[snap.symbol] = Position.open(snap.symbol, time.time(), px, d.mode, self.s.risk, self.s.costs)
             self.meta[snap.symbol] = {"desk": desk, "address": addr, "entry_liq": snap.liquidity_usd,
-                                      "conviction": d.conviction, "risk_score": d.screen.risk_score, "last_price": px}
+                                      "conviction": d.conviction, "risk_score": d.screen.risk_score, "last_price": px,
+                                      "hard_fail": bool(d.screen.hard_fail)}   # audited by the Phase 1 gate
             self.stats["approved"] += 1
             self.save_positions()                 # a crash right after an entry must not lose it
             self.send(f"PAPER BUY {snap.symbol} [{desk}/{d.mode}] conv {d.conviction:.2f} risk {d.screen.risk_score} @ {px:.8g}")
