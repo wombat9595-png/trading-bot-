@@ -139,3 +139,16 @@ def test_tracker_judges_each_token_once(monkeypatch, tmp_path):
     out = tr.run(24)
     assert "flagged : 1/1 crashed 90%+ (100%)" in out          # A counted once, against its first price
     assert "passed  : 0/1 crashed 90%+ (0%)" in out            # C had no answer: left out, not called a crash
+
+
+def test_archived_trades_are_left_out_of_every_stat(journal):
+    """Trades moved to journal/archive/ (e.g. the aborted run of 15 Nov 2026) are kept on disk
+    but must not reach the gate, the report, the dashboard or Pattern Finder."""
+    (journal / "archive").mkdir()
+    (journal / "archive" / "aborted_run_20261115_trades.jsonl").write_text(json.dumps(_trade(-7.41)) + "\n")
+    (journal / "firm_trades.jsonl").write_text(json.dumps(_trade(2.0)) + "\n")
+    sm = dash.summary()
+    assert sm["n"] == 1 and sm["total"] == 2.0 and sm["gate"]["trades_needed"] == 199
+    assert len(patterns.load()) == 1
+    text = report.build(tracker_text="x")
+    assert "All time: 1 trades" in text and "7.41" not in text

@@ -8,3 +8,4 @@ data/*.csv
 *.egg-info/
 .pytest_cache/
 state/
+journal/archive/*.jsonl
